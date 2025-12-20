@@ -141,16 +141,15 @@ def lulc():
         "driver": "GTiff",
         "height": int(lulc_cleaned.shape[0]),
         "width": int(lulc_cleaned.shape[1]),
-        "transform": transform,          # must match lulc_clipped
+        "transform": transform,          
         "count": 1,
         "dtype": "int16",
         "nodata": 0,
-        "crs": src.crs                   # NOT b1.crs
+        "crs": src.crs                 
     })
 
     output_path = "output/LULC.tif"
 
-    # Ensure correct shape: (bands, rows, cols)
     lulc_out = lulc_cleaned.astype("int16")[np.newaxis, :, :]
 
     with rasterio.open(output_path, "w", **lulc_meta) as dest:
