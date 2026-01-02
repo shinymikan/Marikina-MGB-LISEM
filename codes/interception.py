@@ -3,33 +3,45 @@ import numpy as np
 from rasterio.mask import mask
 import fiona
 import geopandas as gpd
+from rasterio.warp import reproject, Resampling
 
 def interception():
     ######### Directory ##########
-    shapefile_path = "raw-maps/Marikina Data Extracted/Marikina_Watershed_projected.shp"
+    mask_path = "raw-maps/mask.tif"
     dataset_path = "raw-maps/Landsat_Bands/"
-
-    with fiona.open(shapefile_path, "r") as shapefile:
-        shapes = [feature['geometry'] for feature in shapefile]
 
 
     ######### Helper Functions ##########
 
-    def preprocess_band(band_path):
-        path = f'{dataset_path}/{band_path}'
-        gdf = gpd.read_file(shapefile_path)
+    def preprocess_band(band_name):
+        band_path = f"{dataset_path}/{band_name}"
 
-        with rasterio.open(path) as src:
-            if gdf.crs != src.crs:
-                print("Warning: CRS Mismatch")
-                gdf = gdf.to_crs(src.crs)
+        # --- Open mask first (REFERENCE GRID) ---
+        with rasterio.open(mask_path) as mask_src:
+            mask = mask_src.read(1)
+            mask_transform = mask_src.transform
+            mask_crs = mask_src.crs
+            mask_shape = mask.shape
 
-            shapes = [geom.__geo_interface__ for geom in gdf.geometry]
-            clipped, transform = mask(src, shapes, crop=True, nodata=0)
+            # Output array: SAME SIZE AS MASK
+            band_aligned = np.empty(mask_shape, dtype="float32")
 
-        band_clipped = clipped[0].astype("float32")
+            # --- Open Landsat band ---
+            with rasterio.open(band_path) as band_src:
+                reproject(
+                    source=band_src.read(1),
+                    destination=band_aligned,
+                    src_transform=band_src.transform,
+                    src_crs=band_src.crs,
+                    dst_transform=mask_transform,
+                    dst_crs=mask_crs,
+                    resampling=Resampling.bilinear  # continuous data
+                )
 
-        return band_clipped, transform
+        # --- Apply mask ---
+        band_aligned[mask == 0] = np.nan
+
+        return band_aligned, mask_transform
     
     def save_map(map, map_name, transform):
         with rasterio.open(
@@ -66,44 +78,11 @@ def interception():
     ndvi = np.where((nir + red) == 0, np.nan, (nir-red)/(nir+red))
     c_factor = 1 - np.exp(-2*ndvi/(1.5-ndvi))
     lai = np.where(c_factor < 1, np.log(1-c_factor)/(-0.4), np.nan)
-
-
-
-    ######### SMAX ##########
-
-    smax = np.full_like(lai, np.nan, dtype="float32")
-
-    lulc_path = "output/LULC.tif"
-
-    with rasterio.open(lulc_path) as src_lulc:
-        lulc = src_lulc.read(1)
-
-    forest = (lulc == 4)
-    grass  = (lulc == 5)
-    agri   = (lulc == 1)
-    built  = (lulc == 3)
-
-    smax[forest] = 0.2856 * lai[forest]
-    smax[grass]  = 0.1713 * lai[grass]
-
-    smax[agri] = (
-        0.935
-        + 0.498 * lai[agri]
-        - 0.00575 * lai[agri]**2
-    )
-
-    smax[built] = (
-        0.935
-        + 0.498 * lai[built]
-        - 0.00575 * lai[built]**2
-    )
-
-    nodata = np.nan
-    smax[np.isnan(smax)] = nodata
+    c_factor = np.where(c_factor < 0, 0, c_factor)
+    lai = np.where(lai < 0, 0, lai)
 
     ######### Save Maps #########
 
     save_map(ndvi, "ndvi", transform)
-    save_map(c_factor, "c_factor", transform)
+    save_map(c_factor, "cover", transform)
     save_map(lai, "lai", transform)
-    save_map(smax, "smax", transform)

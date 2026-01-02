@@ -8,36 +8,49 @@ from sklearn.metrics import classification_report, confusion_matrix
 import fiona
 import geopandas as gpd
 from scipy.ndimage import generic_filter
+from rasterio.warp import reproject, Resampling
 
 
 def lulc():
     ######### Directory ##########
-    shapefile_path = "raw-maps/Marikina Data Extracted/Marikina_Watershed_projected.shp"
+    mask_path = "raw-maps/mask.tif"
     dataset_path = "raw-maps/Landsat_Bands/"
     samples_path = "raw-maps/Marikina Training Samples (20201224) - Sted/training_samples_20251109_combined_dissolved.shp"
-
-    with fiona.open(shapefile_path, "r") as shapefile:
-        shapes = [feature['geometry'] for feature in shapefile]
 
 
     ######### Helper Functions ##########
 
     #For Preprocessing Bands
-    def preprocess_band(band_path):
-        path = f'{dataset_path}/{band_path}'
-        gdf = gpd.read_file(shapefile_path)
 
-        with rasterio.open(path) as src:
-            if gdf.crs != src.crs:
-                print("Warning: CRS Mismatch")
-                gdf = gdf.to_crs(src.crs)
+    def preprocess_band(band_name):
+        band_path = f"{dataset_path}/{band_name}"
 
-            shapes = [geom.__geo_interface__ for geom in gdf.geometry]
-            clipped, transform = mask(src, shapes, crop=True, nodata=0)
+        # --- Open mask first (REFERENCE GRID) ---
+        with rasterio.open(mask_path) as mask_src:
+            mask = mask_src.read(1)
+            mask_transform = mask_src.transform
+            mask_crs = mask_src.crs
+            mask_shape = mask.shape
 
-        band_clipped = clipped[0].astype("float32")
+            # Output array: SAME SIZE AS MASK
+            band_aligned = np.empty(mask_shape, dtype="float32")
 
-        return band_clipped, transform
+            # --- Open Landsat band ---
+            with rasterio.open(band_path) as band_src:
+                reproject(
+                    source=band_src.read(1),
+                    destination=band_aligned,
+                    src_transform=band_src.transform,
+                    src_crs=band_src.crs,
+                    dst_transform=mask_transform,
+                    dst_crs=mask_crs,
+                    resampling=Resampling.bilinear  # continuous data
+                )
+
+        # --- Apply mask ---
+        band_aligned[mask == 0] = np.nan
+
+        return band_aligned, mask_transform
 
 
     #For 8-Neighbor Filtering
@@ -108,14 +121,11 @@ def lulc():
     y_pred = clf.predict(X)
     lulc = y_pred.reshape(ndvi.shape)
 
-    mask_geom = geometry_mask(
-        shapes,
-        transform=transform,
-        invert=True,
-        out_shape=lulc.shape
-    )
+    with rasterio.open(mask_path) as src:
+        mask = src.read(1)
 
-    lulc_clipped = np.where(mask_geom, lulc, np.nan)
+    lulc_clipped = np.where(mask == 1, lulc, np.nan)
+
 
 
     ######### Post-Processing ##########
@@ -148,7 +158,7 @@ def lulc():
         "crs": src.crs                 
     })
 
-    output_path = "output/LULC.tif"
+    output_path = "output/landcover.tif"
 
     lulc_out = lulc_cleaned.astype("int16")[np.newaxis, :, :]
 
