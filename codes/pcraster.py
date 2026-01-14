@@ -136,6 +136,30 @@ def pcraster():
     report(compact, 'output/compact.map')
     report(hardsurf, 'output/hardsurf.map')
 
+    #######################
+    ##Create channel maps##
+    #######################
 
+    print("Creating channel maps...")
 
+    accuflux = accuflux(ldd, 1)
+    streamorder = streamorder(ldd)
 
+    channelmask = ifthenelse((accuflux >= scalar(100000)) | (streamorder >= scalar(6)), scalar(1), scalar(0))
+    channelldd = ifthen(channelmask == scalar(1), ldd)
+
+    chancoh = channelmask * scalar(8)
+    chanman = channelmask * scalar(0.04)
+    chanside = channelmask * scalar(0)
+    chanksat = channelmask * scalar(1)
+    changrad = channelmask * scalar(0.002)
+    chanwidth = channelmask * scalar(6)
+
+    report(channelmask, 'output/channelmask.map') #previously accuflux100_or_streamorder6.map
+    report(channelldd, 'output/channelldd.map')
+    report(chancoh, 'output/chancoh.map')
+    report(chanman, 'output/chanman.map')
+    report(chanside, 'output/chanside.map')
+    report(chanksat, 'output/chanksat.map')
+    report(changrad, 'output/changrad.map')
+    report(chanwidth, 'output/chanwidth.map')
